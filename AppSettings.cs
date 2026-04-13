@@ -4,6 +4,7 @@ namespace OpenCodeSleepGuard;
 
 public class AppSettings
 {
+    private static readonly List<string> DefaultProcessNames = new() { "opencode", "node" };
     private static readonly string DefaultDbPath = Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
         ".local",
@@ -11,7 +12,7 @@ public class AppSettings
         "opencode",
         "opencode.db");
 
-    public List<string> ProcessNames { get; set; } = new() { "opencode", "node" };
+    public List<string> ProcessNames { get; set; } = new(DefaultProcessNames);
     public int CheckIntervalSeconds { get; set; } = 5;
     public string DbPath { get; set; } = DefaultDbPath;
 
@@ -25,6 +26,8 @@ public class AppSettings
 
         try
         {
+            settings.ProcessNames = new List<string>();
+
             var configuration = new ConfigurationBuilder()
                 .SetBasePath(AppContext.BaseDirectory)
                 .AddJsonFile("appsettings.json", optional: true, reloadOnChange: false)
@@ -34,7 +37,7 @@ public class AppSettings
 
             // Ensure ProcessNames has defaults if empty or null
             if (settings.ProcessNames == null || settings.ProcessNames.Count == 0)
-                settings.ProcessNames = new List<string> { "opencode", "node" };
+                settings.ProcessNames = new List<string>(DefaultProcessNames);
 
             if (settings.CheckIntervalSeconds <= 0)
                 settings.CheckIntervalSeconds = 5;

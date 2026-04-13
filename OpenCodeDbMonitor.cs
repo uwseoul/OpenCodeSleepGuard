@@ -13,7 +13,7 @@ public sealed class OpenCodeDbMonitor : IDisposable
     private readonly string _dbPath;
     private readonly string _connectionString;
 
-    private long _lastSeenId;
+    private string? _lastSeenId;
     private bool _isWorking;
     private string _lastActivity = "초기화 전";
     private DateTime? _lastActivityTime;
@@ -41,7 +41,7 @@ public sealed class OpenCodeDbMonitor : IDisposable
 
         if (!File.Exists(_dbPath))
         {
-            _lastSeenId = 0;
+            _lastSeenId = null;
             _isWorking = false;
             _lastActivity = "DB 없음";
             _lastActivityTime = null;
@@ -61,13 +61,13 @@ LIMIT {InitializeRowLimit};";
 
             using var reader = command.ExecuteReader();
 
-            long highestId = 0;
+            string? highestId = null;
             var latestRelevant = (Found: false, IsWorking: false, Activity: string.Empty, ActivityTime: (DateTime?)null);
 
             while (reader.Read())
             {
-                var id = reader.GetInt64(0);
-                if (id > highestId)
+                var id = reader.GetString(0);
+                if (string.IsNullOrEmpty(highestId) || string.CompareOrdinal(id, highestId) > 0)
                 {
                     highestId = id;
                 }
@@ -97,7 +97,7 @@ LIMIT {InitializeRowLimit};";
             else
             {
                 _isWorking = false;
-                _lastActivity = highestId > 0 ? "관련 step 이벤트 없음" : "part 레코드 없음";
+                _lastActivity = !string.IsNullOrEmpty(highestId) ? "관련 step 이벤트 없음" : "part 레코드 없음";
                 _lastActivityTime = null;
             }
 
@@ -130,17 +130,17 @@ LIMIT {InitializeRowLimit};";
             command.CommandText = $@"
 SELECT id, time_created, data
 FROM part
-WHERE id > $lastSeenId
+WHERE ($lastSeenId IS NULL OR id > $lastSeenId)
 ORDER BY id
 LIMIT {PollRowLimit};";
-            command.Parameters.AddWithValue("$lastSeenId", _lastSeenId);
+            command.Parameters.AddWithValue("$lastSeenId", (object?)_lastSeenId ?? DBNull.Value);
 
             using var reader = command.ExecuteReader();
 
             while (reader.Read())
             {
-                var id = reader.GetInt64(0);
-                if (id > _lastSeenId)
+                var id = reader.GetString(0);
+                if (string.IsNullOrEmpty(_lastSeenId) || string.CompareOrdinal(id, _lastSeenId) > 0)
                 {
                     _lastSeenId = id;
                 }
@@ -226,7 +226,7 @@ LIMIT {PollRowLimit};";
         }
         catch (Exception ex)
         {
-            var id = reader.IsDBNull(idColumnIndex) ? -1 : reader.GetInt64(idColumnIndex);
+            var id = reader.IsDBNull(idColumnIndex) ? "<null>" : reader.GetString(idColumnIndex);
             Console.WriteLine($"[OpenCodeDbMonitor] Failed to parse part row {id}: {ex.Message}");
             return ParsedEvent.NotRelevant;
         }
