@@ -112,7 +112,16 @@ public static class Program
                         }
                     }
 
-                    _statusWindow.UpdateStatus(true, processes.Count, result.IsWorking, _sleepManager.IsSleepPrevented);
+                    _statusWindow.UpdateStatus(
+                        true,
+                        result.IsWorking,
+                        result.LastActivity,
+                        result.LastActivityTime,
+                        result.SessionTitle,
+                        result.AgentName,
+                        result.TaskInfo,
+                        result.DbStatus,
+                        _sleepManager.IsSleepPrevented);
                 }
                 else
                 {
@@ -123,7 +132,7 @@ public static class Program
                     }
 
                     _trayIcon.SetIdle();
-                    _statusWindow.UpdateStatus(false, 0, false, false);
+                    _statusWindow.UpdateStatus(false, false, "프로세스 없음", null, "-", "-", "-", "DB 대기", false);
 
                     Console.WriteLine("[Program] Target process not detected — auto-exiting.");
                     Shutdown();

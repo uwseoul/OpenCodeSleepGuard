@@ -3,7 +3,14 @@ using Microsoft.Data.Sqlite;
 
 namespace OpenCodeSleepGuard;
 
-public sealed record DbPollResult(bool IsWorking, string LastActivity, DateTime? LastActivityTime);
+public sealed record DbPollResult(
+    bool IsWorking,
+    string LastActivity,
+    DateTime? LastActivityTime,
+    string SessionTitle,
+    string AgentName,
+    string TaskInfo,
+    string DbStatus);
 
 public sealed class OpenCodeDbMonitor : IDisposable
 {
@@ -17,6 +24,10 @@ public sealed class OpenCodeDbMonitor : IDisposable
     private bool _isWorking;
     private string _lastActivity = "초기화 전";
     private DateTime? _lastActivityTime;
+    private string _sessionTitle = "-";
+    private string _agentName = "-";
+    private string _taskInfo = "-";
+    private string _dbStatus = "연결 대기";
     private bool _disposed;
 
     public OpenCodeDbMonitor(string dbPath)
@@ -45,6 +56,10 @@ public sealed class OpenCodeDbMonitor : IDisposable
             _isWorking = false;
             _lastActivity = "DB 없음";
             _lastActivityTime = null;
+            _sessionTitle = "-";
+            _agentName = "-";
+            _taskInfo = "-";
+            _dbStatus = "DB 없음";
             Console.WriteLine($"[OpenCodeDbMonitor] DB file not found: {_dbPath}");
             return CurrentResult();
         }
@@ -54,15 +69,18 @@ public sealed class OpenCodeDbMonitor : IDisposable
             using var connection = OpenConnection();
             using var command = connection.CreateCommand();
             command.CommandText = $@"
-SELECT id, time_created, data
-FROM part
-ORDER BY id DESC
+SELECT p.id, p.time_created, p.data, m.data, s.title
+FROM part p
+LEFT JOIN message m ON m.id = p.message_id
+LEFT JOIN session s ON s.id = p.session_id
+ORDER BY p.id DESC
 LIMIT {InitializeRowLimit};";
 
             using var reader = command.ExecuteReader();
 
             string? highestId = null;
             var latestRelevant = (Found: false, IsWorking: false, Activity: string.Empty, ActivityTime: (DateTime?)null);
+            var latestMeta = false;
 
             while (reader.Read())
             {
@@ -70,6 +88,12 @@ LIMIT {InitializeRowLimit};";
                 if (string.IsNullOrEmpty(highestId) || string.CompareOrdinal(id, highestId) > 0)
                 {
                     highestId = id;
+                }
+
+                if (!latestMeta)
+                {
+                    ApplyMetadata(reader, 1, 2, 3, 4);
+                    latestMeta = true;
                 }
 
                 if (latestRelevant.Found)
@@ -101,11 +125,14 @@ LIMIT {InitializeRowLimit};";
                 _lastActivityTime = null;
             }
 
+            _dbStatus = "연결 정상";
+
             Console.WriteLine($"[OpenCodeDbMonitor] Initialized. LastSeenId={_lastSeenId}, Working={_isWorking}, Activity={_lastActivity}");
             return CurrentResult();
         }
         catch (Exception ex)
         {
+            _dbStatus = "읽기 실패";
             Console.WriteLine($"[OpenCodeDbMonitor] Initialize failed: {ex.Message}");
             return CurrentResult();
         }
@@ -120,6 +147,7 @@ LIMIT {InitializeRowLimit};";
             _isWorking = false;
             _lastActivity = "DB 없음";
             _lastActivityTime = null;
+            _dbStatus = "DB 없음";
             return CurrentResult();
         }
 
@@ -128,22 +156,28 @@ LIMIT {InitializeRowLimit};";
             using var connection = OpenConnection();
             using var command = connection.CreateCommand();
             command.CommandText = $@"
-SELECT id, time_created, data
-FROM part
-WHERE ($lastSeenId IS NULL OR id > $lastSeenId)
-ORDER BY id
+SELECT p.id, p.time_created, p.data, m.data, s.title
+FROM part p
+LEFT JOIN message m ON m.id = p.message_id
+LEFT JOIN session s ON s.id = p.session_id
+WHERE ($lastSeenId IS NULL OR p.id > $lastSeenId)
+ORDER BY p.id
 LIMIT {PollRowLimit};";
             command.Parameters.AddWithValue("$lastSeenId", (object?)_lastSeenId ?? DBNull.Value);
 
             using var reader = command.ExecuteReader();
+            var sawRows = false;
 
             while (reader.Read())
             {
+                sawRows = true;
                 var id = reader.GetString(0);
                 if (string.IsNullOrEmpty(_lastSeenId) || string.CompareOrdinal(id, _lastSeenId) > 0)
                 {
                     _lastSeenId = id;
                 }
+
+                ApplyMetadata(reader, 1, 2, 3, 4);
 
                 var parsed = ParseEvent(reader, idColumnIndex: 0, timeColumnIndex: 1, dataColumnIndex: 2);
                 if (!parsed.IsRelevant)
@@ -156,10 +190,16 @@ LIMIT {PollRowLimit};";
                 _lastActivityTime = parsed.ActivityTime;
             }
 
+            if (sawRows)
+            {
+                _dbStatus = "연결 정상";
+            }
+
             return CurrentResult();
         }
         catch (Exception ex)
         {
+            _dbStatus = "읽기 실패";
             Console.WriteLine($"[OpenCodeDbMonitor] Poll failed: {ex.Message}");
             return CurrentResult();
         }
@@ -179,7 +219,15 @@ LIMIT {PollRowLimit};";
 
     private DbPollResult CurrentResult()
     {
-        return new DbPollResult(_isWorking, _lastActivity, _lastActivityTime);
+        return new DbPollResult(_isWorking, _lastActivity, _lastActivityTime, _sessionTitle, _agentName, _taskInfo, _dbStatus);
+    }
+
+    private void ApplyMetadata(SqliteDataReader reader, int timeColumnIndex, int dataColumnIndex, int messageDataColumnIndex, int sessionTitleColumnIndex)
+    {
+        _lastActivityTime = ParseTimestamp(reader, timeColumnIndex) ?? _lastActivityTime;
+        _sessionTitle = ReadSessionTitle(reader, sessionTitleColumnIndex);
+        _agentName = ReadAgentName(reader, messageDataColumnIndex);
+        _taskInfo = ReadTaskInfo(reader, dataColumnIndex);
     }
 
     private static ParsedEvent ParseEvent(SqliteDataReader reader, int idColumnIndex, int timeColumnIndex, int dataColumnIndex)
@@ -305,5 +353,90 @@ LIMIT {PollRowLimit};";
     private readonly record struct ParsedEvent(bool IsRelevant, bool IsWorking, string Activity, DateTime? ActivityTime)
     {
         public static ParsedEvent NotRelevant => new(false, false, string.Empty, null);
+    }
+
+    private static string ReadSessionTitle(SqliteDataReader reader, int sessionTitleColumnIndex)
+    {
+        if (reader.IsDBNull(sessionTitleColumnIndex))
+        {
+            return "-";
+        }
+
+        var value = reader.GetString(sessionTitleColumnIndex);
+        return string.IsNullOrWhiteSpace(value) ? "-" : value;
+    }
+
+    private static string ReadAgentName(SqliteDataReader reader, int messageDataColumnIndex)
+    {
+        if (reader.IsDBNull(messageDataColumnIndex))
+        {
+            return "-";
+        }
+
+        try
+        {
+            using var document = JsonDocument.Parse(reader.GetString(messageDataColumnIndex));
+            var root = document.RootElement;
+
+            if (root.TryGetProperty("agent", out var agentElement))
+            {
+                var value = agentElement.GetString();
+                if (!string.IsNullOrWhiteSpace(value))
+                {
+                    return value;
+                }
+            }
+
+            if (root.TryGetProperty("mode", out var modeElement))
+            {
+                var value = modeElement.GetString();
+                if (!string.IsNullOrWhiteSpace(value))
+                {
+                    return value;
+                }
+            }
+        }
+        catch
+        {
+        }
+
+        return "-";
+    }
+
+    private static string ReadTaskInfo(SqliteDataReader reader, int dataColumnIndex)
+    {
+        if (reader.IsDBNull(dataColumnIndex))
+        {
+            return "-";
+        }
+
+        try
+        {
+            using var document = JsonDocument.Parse(reader.GetString(dataColumnIndex));
+            var root = document.RootElement;
+
+            if (root.TryGetProperty("tool", out var toolElement))
+            {
+                var tool = toolElement.GetString();
+                if (!string.IsNullOrWhiteSpace(tool))
+                {
+                    return tool;
+                }
+            }
+
+            if (root.TryGetProperty("type", out var typeElement))
+            {
+                var type = typeElement.GetString();
+                if (!string.IsNullOrWhiteSpace(type))
+                {
+                    return type;
+                }
+            }
+        }
+        catch
+        {
+        }
+
+        return "-";
     }
 }
