@@ -13,6 +13,7 @@ public sealed class TrayIcon : IDisposable
     private bool _disposed;
 
     public event EventHandler? ExitRequested;
+    public event EventHandler? StatusShowRequested;
 
     public TrayIcon()
     {
@@ -20,6 +21,10 @@ public sealed class TrayIcon : IDisposable
         _idleIcon = CreateColoredIcon(Color.Gray, Color.White);
 
         _contextMenu = new ContextMenuStrip();
+        var statusItem = new ToolStripMenuItem("상태");
+        statusItem.Click += (_, _) => StatusShowRequested?.Invoke(this, EventArgs.Empty);
+        _contextMenu.Items.Add(statusItem);
+        _contextMenu.Items.Add(new ToolStripSeparator());
         var exitItem = new ToolStripMenuItem("Exit");
         exitItem.Click += (_, _) => ExitRequested?.Invoke(this, EventArgs.Empty);
         _contextMenu.Items.Add(exitItem);
@@ -31,6 +36,7 @@ public sealed class TrayIcon : IDisposable
             Visible = true,
             ContextMenuStrip = _contextMenu
         };
+        _notifyIcon.DoubleClick += (_, _) => StatusShowRequested?.Invoke(this, EventArgs.Empty);
     }
 
     public void SetWorking()

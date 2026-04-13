@@ -11,6 +11,7 @@ public static class Program
     private static ProcessWatcher _processWatcher = null!;
     private static CpuMonitor _cpuMonitor = null!;
     private static TrayIcon _trayIcon = null!;
+    private static StatusWindow _statusWindow = null!;
     private static readonly CancellationTokenSource _cts = new();
 
     // Idle tracking
@@ -45,9 +46,11 @@ public static class Program
 
         _trayIcon = new TrayIcon();
         _trayIcon.ExitRequested += OnExitRequested;
+        _trayIcon.StatusShowRequested += OnStatusShowRequested;
 
         // Subscribe to process state changes
         _processWatcher.ProcessStateChanged += OnProcessStateChanged;
+        _statusWindow = new StatusWindow();
 
         // Setup Ctrl+C handler
         Console.CancelKeyPress += OnCancelKeyPress;
@@ -88,6 +91,7 @@ public static class Program
                 {
                     var processes = _processWatcher.GetProcesses();
                     double cpuUsage = _cpuMonitor.GetTotalCpuUsage(processes);
+                    _statusWindow.UpdateStatus(_processWatcher.IsRunning, processes.Count, cpuUsage, _sleepManager.IsSleepPrevented);
 
                     if (cpuUsage > _settings.CpuThreshold)
                     {
@@ -135,6 +139,8 @@ public static class Program
 
                     _idleSince = DateTime.MaxValue;
 
+                    _statusWindow.UpdateStatus(false, 0, 0, false);
+
                     // Spec: OpenCode 종료 → 절전 복원 + 자동 종료
                     Console.WriteLine("[Program] Target process not detected — auto-exiting.");
                     Shutdown();
@@ -174,6 +180,12 @@ public static class Program
         Shutdown();
     }
 
+    private static void OnStatusShowRequested(object? sender, EventArgs e)
+    {
+        Console.WriteLine("[Program] Status window requested.");
+        _statusWindow.ShowStatus();
+    }
+
     private static void OnCancelKeyPress(object? sender, ConsoleCancelEventArgs e)
     {
         e.Cancel = true;
@@ -191,6 +203,7 @@ public static class Program
     {
         Console.WriteLine("[Program] Cleaning up...");
         _sleepManager?.Dispose();
+        _statusWindow?.Dispose();
         _trayIcon?.Dispose();
         _cts?.Dispose();
         Console.WriteLine("[Program] OpenCodeSleepGuard stopped.");
