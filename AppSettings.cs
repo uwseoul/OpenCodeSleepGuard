@@ -4,10 +4,16 @@ namespace OpenCodeSleepGuard;
 
 public class AppSettings
 {
+    private static readonly string DefaultDbPath = Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
+        ".local",
+        "share",
+        "opencode",
+        "opencode.db");
+
     public List<string> ProcessNames { get; set; } = new() { "opencode", "node" };
-    public double CpuThreshold { get; set; } = 5.0;
-    public int IdleTimeoutSeconds { get; set; } = 180;
     public int CheckIntervalSeconds { get; set; } = 5;
+    public string DbPath { get; set; } = DefaultDbPath;
 
     public static AppSettings Load()
     {
@@ -30,13 +36,17 @@ public class AppSettings
             if (settings.ProcessNames == null || settings.ProcessNames.Count == 0)
                 settings.ProcessNames = new List<string> { "opencode", "node" };
 
-            // Validate numeric bounds
-            if (settings.CpuThreshold <= 0)
-                settings.CpuThreshold = 5.0;
-            if (settings.IdleTimeoutSeconds <= 0)
-                settings.IdleTimeoutSeconds = 180;
             if (settings.CheckIntervalSeconds <= 0)
                 settings.CheckIntervalSeconds = 5;
+
+            if (string.IsNullOrWhiteSpace(settings.DbPath))
+            {
+                settings.DbPath = DefaultDbPath;
+            }
+            else
+            {
+                settings.DbPath = Environment.ExpandEnvironmentVariables(settings.DbPath);
+            }
         }
         catch
         {
