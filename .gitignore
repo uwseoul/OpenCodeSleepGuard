@@ -1,0 +1,29 @@
+## .NET
+bin/
+obj/
+*.user
+*.suo
+*.cache
+*.log
+
+## Visual Studio
+.vs/
+*.vsidx
+*.vspscc
+*.vsscc
+
+## Rider
+.idea/
+*.DotSettings.user
+
+## Build
+artifacts/
+publish/
+
+## OS
+Thumbs.db
+Desktop.ini
+.DS_Store
+
+## OpenCode
+.sisyphus/

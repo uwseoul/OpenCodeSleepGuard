@@ -1,0 +1,64 @@
+name: Build and Release
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+    branches: [main]
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Restore dependencies
+        run: dotnet restore
+
+      - name: Build
+        run: dotnet build -c Release --no-restore
+
+      - name: Publish (framework-dependent)
+        run: |
+          dotnet publish -c Release -r win-x64 --self-contained false -p:PublishSingleFile=true -o ./publish/fdd
+          Compress-Archive -Path ./publish/fdd/* -DestinationPath ./OpenCodeSleepGuard-fdd.zip
+
+      - name: Publish (self-contained)
+        run: |
+          dotnet publish -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:PublishTrimmed=false -o ./publish/scd
+          Compress-Archive -Path ./publish/scd/* -DestinationPath ./OpenCodeSleepGuard-selfcontained.zip
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: OpenCodeSleepGuard
+          path: |
+            ./OpenCodeSleepGuard-fdd.zip
+            ./OpenCodeSleepGuard-selfcontained.zip
+
+  release:
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: windows-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: OpenCodeSleepGuard
+          path: ./artifacts
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: ./artifacts/*.zip
+          generate_release_notes: true
+          draft: false
+          prerelease: false
