@@ -11,8 +11,8 @@ sealed class StatusWindow : Form
     private Label _lblStatusValue = null!;
     private Label _lblProcessTitle = null!;
     private Label _lblProcessValue = null!;
-    private Label _lblCpuTitle = null!;
-    private Label _lblCpuValue = null!;
+    private Label _lblActivityTitle = null!;
+    private Label _lblActivityValue = null!;
     private Label _lblSleepTitle = null!;
     private Label _lblSleepValue = null!;
     private Label _lblUptimeTitle = null!;
@@ -92,19 +92,19 @@ sealed class StatusWindow : Form
         _lblProcessValue.Size = new Size(188, 20);
 
         // CPU usage row
-        _lblCpuTitle = new Label();
-        _lblCpuTitle.Text = "CPU 사용량";
-        _lblCpuTitle.Font = new Font("Segoe UI", 9F);
-        _lblCpuTitle.ForeColor = Color.FromArgb(120, 120, 120);
-        _lblCpuTitle.Location = new Point(16, 132);
-        _lblCpuTitle.Size = new Size(120, 20);
+        _lblActivityTitle = new Label();
+        _lblActivityTitle.Text = "감지 방식";
+        _lblActivityTitle.Font = new Font("Segoe UI", 9F);
+        _lblActivityTitle.ForeColor = Color.FromArgb(120, 120, 120);
+        _lblActivityTitle.Location = new Point(16, 132);
+        _lblActivityTitle.Size = new Size(120, 20);
 
-        _lblCpuValue = new Label();
-        _lblCpuValue.Text = "0.0%";
-        _lblCpuValue.Font = new Font("Segoe UI", 9F, FontStyle.Bold);
-        _lblCpuValue.ForeColor = Color.FromArgb(40, 40, 40);
-        _lblCpuValue.Location = new Point(136, 132);
-        _lblCpuValue.Size = new Size(188, 20);
+        _lblActivityValue = new Label();
+        _lblActivityValue.Text = "DB 폴링";
+        _lblActivityValue.Font = new Font("Segoe UI", 9F, FontStyle.Bold);
+        _lblActivityValue.ForeColor = Color.FromArgb(40, 40, 40);
+        _lblActivityValue.Location = new Point(136, 132);
+        _lblActivityValue.Size = new Size(188, 20);
 
         // Sleep prevention row
         _lblSleepTitle = new Label();
@@ -151,7 +151,7 @@ sealed class StatusWindow : Form
 
         // Version label
         _lblVersion = new Label();
-        _lblVersion.Text = "v1.0.0";
+        _lblVersion.Text = "v1.2.0";
         _lblVersion.Font = new Font("Segoe UI", 8F);
         _lblVersion.ForeColor = Color.FromArgb(150, 150, 150);
         _lblVersion.Location = new Point(16, 270);
@@ -165,8 +165,8 @@ sealed class StatusWindow : Form
         Controls.Add(_lblStatusValue);
         Controls.Add(_lblProcessTitle);
         Controls.Add(_lblProcessValue);
-        Controls.Add(_lblCpuTitle);
-        Controls.Add(_lblCpuValue);
+        Controls.Add(_lblActivityTitle);
+        Controls.Add(_lblActivityValue);
         Controls.Add(_lblSleepTitle);
         Controls.Add(_lblSleepValue);
         Controls.Add(_lblUptimeTitle);
@@ -175,15 +175,22 @@ sealed class StatusWindow : Form
         Controls.Add(_lblVersion);
     }
 
-    public void UpdateStatus(bool isRunning, int processCount, double cpuUsage, bool isSleepPrevented)
+    public void UpdateStatus(bool isRunning, int processCount, bool isWorking, bool isSleepPrevented)
     {
+        if (InvokeRequired)
+        {
+            try { BeginInvoke(new Action(() => UpdateStatus(isRunning, processCount, isWorking, isSleepPrevented))); }
+            catch (InvalidOperationException) { }
+            return;
+        }
+
         // Status
         if (!isRunning || processCount == 0)
         {
             _lblStatusValue.Text = "⚪ 프로세스 없음";
             _lblStatusValue.ForeColor = Color.FromArgb(40, 40, 40);
         }
-        else if (cpuUsage > 5.0)
+        else if (isWorking)
         {
             _lblStatusValue.Text = "🟢 작업 중";
             _lblStatusValue.ForeColor = Color.FromArgb(34, 139, 34);
@@ -197,9 +204,8 @@ sealed class StatusWindow : Form
         // Process count
         _lblProcessValue.Text = processCount > 0 ? $"{processCount}개 감지됨" : "없음";
 
-        // CPU usage
-        _lblCpuValue.Text = $"{cpuUsage:F1}%";
-        _lblCpuValue.ForeColor = cpuUsage > 5.0
+        _lblActivityValue.Text = isWorking ? "DB 폴링 (작업 감지)" : "DB 폴링 (대기 감지)";
+        _lblActivityValue.ForeColor = isWorking
             ? Color.FromArgb(34, 139, 34)
             : Color.FromArgb(120, 120, 120);
 
@@ -216,20 +222,27 @@ sealed class StatusWindow : Form
         }
     }
 
-    public new void Show()
-    {
-        ShowStatus();
-    }
-
     public void ShowStatus()
     {
-        Show();
+        if (InvokeRequired)
+        {
+            try { BeginInvoke(new Action(ShowStatus)); }
+            catch (InvalidOperationException) { }
+            return;
+        }
+        base.Show();
         Activate();
         _uptimeTimer.Start();
     }
 
     public new void Hide()
     {
+        if (InvokeRequired)
+        {
+            try { BeginInvoke(new Action(Hide)); }
+            catch (InvalidOperationException) { }
+            return;
+        }
         _uptimeTimer.Stop();
         base.Hide();
     }
@@ -237,7 +250,13 @@ sealed class StatusWindow : Form
     private void UptimeTimer_Tick(object? sender, EventArgs e)
     {
         var elapsed = DateTime.UtcNow - _startTime;
-        _lblUptimeValue.Text = $"{elapsed.Minutes}분 {elapsed.Seconds}초";
+        var hours = (int)elapsed.TotalHours;
+        if (hours >= 1)
+            _lblUptimeValue.Text = $"{hours}시간 {elapsed.Minutes}분 {elapsed.Seconds}초";
+        else if (elapsed.Minutes >= 1)
+            _lblUptimeValue.Text = $"{elapsed.Minutes}분 {elapsed.Seconds}초";
+        else
+            _lblUptimeValue.Text = $"{elapsed.Seconds}초";
     }
 
     private void BtnClose_Click(object? sender, EventArgs e)
