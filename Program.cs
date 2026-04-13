@@ -9,13 +9,10 @@ public static class Program
     private static AppSettings _settings = null!;
     private static SleepManager _sleepManager = null!;
     private static ProcessWatcher _processWatcher = null!;
-    private static CpuMonitor _cpuMonitor = null!;
+    private static OpenCodeDbMonitor _dbMonitor = null!;
     private static TrayIcon _trayIcon = null!;
     private static StatusWindow _statusWindow = null!;
     private static readonly CancellationTokenSource _cts = new();
-
-    // Idle tracking
-    private static DateTime _idleSince = DateTime.MaxValue;
 
     [STAThread]
     public static void Main(string[] args)
@@ -32,13 +29,12 @@ public static class Program
         // Load settings
         _settings = AppSettings.Load();
         Console.WriteLine($"[Program] Settings loaded: ProcessNames=[{string.Join(", ", _settings.ProcessNames)}], " +
-                          $"CpuThreshold={_settings.CpuThreshold}%, IdleTimeout={_settings.IdleTimeoutSeconds}s, " +
-                          $"CheckInterval={_settings.CheckIntervalSeconds}s");
+                          $"CheckInterval={_settings.CheckIntervalSeconds}s, DbPath={_settings.DbPath}");
 
         // Initialize components
         _sleepManager = new SleepManager();
         _processWatcher = new ProcessWatcher(_settings.ProcessNames);
-        _cpuMonitor = new CpuMonitor();
+        _dbMonitor = new OpenCodeDbMonitor(_settings.DbPath);
 
         // Setup tray icon on the main STA thread (required for WinForms)
         Application.EnableVisualStyles();
@@ -65,6 +61,9 @@ public static class Program
 
         Console.WriteLine("[Program] Running. Press Ctrl+C or use tray icon to exit.");
 
+        // Auto-show status window on startup
+        _statusWindow.ShowStatus();
+
         // Run WinForms message pump (keeps tray icon alive)
         Application.Run();
 
@@ -75,8 +74,9 @@ public static class Program
     {
         var cancellationToken = (CancellationToken)state!;
         var checkInterval = TimeSpan.FromSeconds(_settings.CheckIntervalSeconds);
+        var initialDbState = _dbMonitor.Initialize();
 
-        Console.WriteLine("[Program] Main loop started.");
+        Console.WriteLine($"[Program] Main loop started. DB state: {initialDbState.LastActivity}, Working={initialDbState.IsWorking}");
 
         while (!cancellationToken.IsCancellationRequested)
         {
@@ -84,64 +84,47 @@ public static class Program
             {
                 cancellationToken.ThrowIfCancellationRequested();
 
-                // Refresh process state
                 _processWatcher.RefreshState();
+                var processes = _processWatcher.GetProcesses();
+                var isRunning = processes.Count > 0;
 
-                if (_processWatcher.IsRunning)
+                if (isRunning)
                 {
-                    var processes = _processWatcher.GetProcesses();
-                    double cpuUsage = _cpuMonitor.GetTotalCpuUsage(processes);
-                    _statusWindow.UpdateStatus(_processWatcher.IsRunning, processes.Count, cpuUsage, _sleepManager.IsSleepPrevented);
+                    var result = _dbMonitor.Poll();
 
-                    if (cpuUsage > _settings.CpuThreshold)
+                    if (result.IsWorking)
                     {
-                        // Process is working
-                        _idleSince = DateTime.MaxValue;
-
                         if (!_sleepManager.IsSleepPrevented)
                         {
                             _sleepManager.PreventSleep();
                             _trayIcon.SetWorking();
-                            Console.WriteLine($"[Program] Working — CPU: {cpuUsage:F1}% — sleep prevented");
+                            Console.WriteLine($"[Program] Working — DB event: {result.LastActivity} — sleep prevented");
                         }
                     }
                     else
                     {
-                        // Process is idle (low CPU)
-                        if (_idleSince == DateTime.MaxValue)
-                        {
-                            _idleSince = DateTime.UtcNow;
-                            Console.WriteLine($"[Program] Idle detected — CPU: {cpuUsage:F1}% — waiting {_settings.IdleTimeoutSeconds}s");
-                        }
+                        _trayIcon.SetIdle();
 
-                        var idleDuration = DateTime.UtcNow - _idleSince;
-                        if (idleDuration.TotalSeconds >= _settings.IdleTimeoutSeconds)
+                        if (_sleepManager.IsSleepPrevented)
                         {
-                            // Idle timeout reached — allow sleep
-                            if (_sleepManager.IsSleepPrevented)
-                            {
-                                _sleepManager.AllowSleep();
-                                _trayIcon.SetIdle();
-                                Console.WriteLine($"[Program] Idle for {_settings.IdleTimeoutSeconds}s — sleep allowed");
-                            }
+                            _sleepManager.AllowSleep();
+                            Console.WriteLine($"[Program] Idle — DB event: {result.LastActivity} — sleep allowed");
                         }
                     }
+
+                    _statusWindow.UpdateStatus(true, processes.Count, result.IsWorking, _sleepManager.IsSleepPrevented);
                 }
                 else
                 {
-                    // No target process running — restore sleep and auto-exit
                     if (_sleepManager.IsSleepPrevented)
                     {
                         _sleepManager.AllowSleep();
-                        _trayIcon.SetIdle();
                         Console.WriteLine("[Program] Target process not running — sleep restored");
                     }
 
-                    _idleSince = DateTime.MaxValue;
+                    _trayIcon.SetIdle();
+                    _statusWindow.UpdateStatus(false, 0, false, false);
 
-                    _statusWindow.UpdateStatus(false, 0, 0, false);
-
-                    // Spec: OpenCode 종료 → 절전 복원 + 자동 종료
                     Console.WriteLine("[Program] Target process not detected — auto-exiting.");
                     Shutdown();
                     break;
@@ -202,6 +185,7 @@ public static class Program
     private static void Cleanup()
     {
         Console.WriteLine("[Program] Cleaning up...");
+        _dbMonitor?.Dispose();
         _sleepManager?.Dispose();
         _statusWindow?.Dispose();
         _trayIcon?.Dispose();
